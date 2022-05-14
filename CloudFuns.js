@@ -1,3 +1,4 @@
+//Backup Cloud Functions:
 //Spoof Proof Logics
 Moralis.Cloud.define("exists", async (request) => {
   		const logger = Moralis.Cloud.getLogger();
@@ -154,12 +155,12 @@ Moralis.Cloud.define('getUser',async(request)=>{
   		const user=await new Parse.Query(User).equalTo('username',request.params.name).first({useMasterKey:true});
   		if(user){
           	const friends=await new Parse.Query(Friend).equalTo('user',request.params.fromname).find({useMasterKey:true});
-          	let result={};
+          	let result=[];
   				for(let i=0;i<friends.length;i++){
-          				if(friends[i].get("actualName")===user.get('username'))
-                        {result=friends[i];break;}
+          				if(friends[i].get("actualName")===request.params.name)
+                        {result.push(friends[i]);break;}
         		}
-          if(friends.length>0){
+          if(result.length!==0){
             return result;
           }
           else{
@@ -262,14 +263,100 @@ Moralis.Cloud.define('updateName',async(request)=>{
   		await friend.save(null,{useMasterKey:true});
   		return friend;
 });
-Moralis.Cloud.define('updateContact',async(request)=>{
-		const logger = Moralis.Cloud.getLogger();
-		const Request = Moralis.Object.extend("Requests");
-		const Pending = Moralis.Object.extend("Pending");
-		const Friend = Moralis.Object.extend("Friends");
-		const FriendAcct = Moralis.Object.extend("Friend_Accounts");
-		const rqst = await new Parse.Query(Request).equalTo('objectId', request.params.id).first({ useMasterKey: true });
-		const pending = await new Parse.Query(Pending).equalTo({ 'userName': rqst.get("friendName"), 'friendName': rqst.get("userName") }).first({ useMasterKey: true });
-				
+
+Moralis.Cloud.define('transferPost',async(request)=>{
+  const Tran= Moralis.Object.extend("Transactions");
+  let tran=new Tran();
+    tran.set('senderName',request.params.senderName);
+    tran.set('receiverName',request.params.receiverName);
+    tran.set('units',request.params.units);
+    tran.set('Category',request.params.catg);
+    tran.set('Description',request.params.desc);
+    tran.set('Network',request.params.network);
+    tran.set('senderAddress',request.params.sendAddr);
+    tran.set('receiverAddress',request.params.recvAddr);
+    tran.set('transactionHash',request.params.transactionhash);
+  	tran.set('confirmed',false);
+  	tran.set('Token',request.params.tokenAddress);
+    await tran.save(null,{useMasterKey:true});
 });
 
+Moralis.Cloud.define('getStatus',async(request)=>{
+  		let Chain=undefined;
+  		let ChainColl="";
+		switch(request.params.chain){
+          case 1:
+            	Chain = Moralis.Object.extend("EthTransactions");
+            	ChainColl="EthTransactions";
+            	break;
+          case 80001:
+            	Chain = Moralis.Object.extend("PolygonTransactions");
+            	ChainColl="PolygonTransactions";
+            	break;
+          case 137:
+            	Chain = Moralis.Object.extend("PolygonTransactions");
+            	ChainColl="PolygonTransactions";
+            	break;
+          case 43113:
+            	Chain = Moralis.Object.extend("AvaxTransactions");
+            	ChainColl="AvaxTransactions";
+            	break;
+          default:
+            	break;
+        }
+  		if(Chain){
+        	const trans=await new Parse.Query(Chain).aggregate([
+            	{
+                  match:{'to_address':request.params.addr}
+                },
+              	{
+                  unionWith:{
+                    coll:ChainColl,
+                    pipeline:[
+                      {
+                        $match:{'from_address':request.params.addr}
+                      }
+                    ]
+                  }
+                },
+              	{
+                  sort:{'block_timestamp':-1}
+                }
+            ]);
+        	const Tran= Moralis.Object.extend("Transactions");
+          	let stats=[];
+          	for(let i=0;i<trans.length;i++){
+              	const trn=await new Moralis.Query(Tran).equalTo('transactionHash',trans[i].hash).first();
+              	if(trn){
+                  stats.push({
+                	confirm:trans[i].confirmed,
+                  	gas:trans[i].gas,
+                  	senderName:trn.get('senderName'),
+  					receiverName:trn.get('receiverName'),
+  					units:trn.get('units'),
+  					catg:trn.get('Category'),
+  					desc:trn.get('Description'),
+  					network:trn.get('Network'),
+  					sendAddr:trn.get('senderAddress'),
+   					recvAddr:trn.get('receiverAddress'),
+  					transactionhash:trn.get('transactionHash'),
+                    tstamp:trans[i].block_timestamp,
+                    tokenAddress:trn.get('Token')
+                });
+              }
+            }
+        	return stats;
+        }
+});
+Moralis.Cloud.define('WebsocketTran',async(request)=>{
+  	const tconfirm = await new Moralis.Query(request.params.coll).equalTo('hash', request.params.hash).subscribe();
+  	const Tran= Moralis.Object.extend("Transactions");
+  	tconfirm.on('update', async(obj) => {
+   	if (obj.get('confirmed')) {
+      		const trn=await new Moralis.Query(Tran).equalTo('transactionHash',request.params.hash).first();
+      		trn.set('confirmed',true);
+      		await trn.save();
+            tconfirm.unsubscribe();
+       }
+    });
+});
