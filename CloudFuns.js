@@ -291,7 +291,7 @@ Moralis.Cloud.define('transferPost',async(request)=>{
     tran.set('transactionHash',request.params.transactionhash);
   	tran.set('confirmed',false);
   	tran.set('Token',request.params.tokenAddress);
-  	tran.set('tstamp',request.params.tstamp);
+  	tran.set('tstamp',new Date(request.params.tstamp));
     await tran.save(null,{useMasterKey:true});
 });
 
