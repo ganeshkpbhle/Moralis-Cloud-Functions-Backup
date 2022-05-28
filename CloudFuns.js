@@ -345,7 +345,7 @@ Moralis.Cloud.define('getStatus',async(request)=>{
                   }
                 },
               	{
-                  sort:{'block_timestamp':-1}
+                  sort:{'tstamp':-1}
                 }
             ]);
   		let stats=[];
@@ -424,7 +424,7 @@ Moralis.Cloud.define('getHistory',async(request)=>{
                   }
                 },
               	{
-                  sort:{'block_timestamp':-1}
+                  sort:{'tstamp':-1}
                 }
             ]);
   		let history=[];
