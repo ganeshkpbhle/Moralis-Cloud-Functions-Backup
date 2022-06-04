@@ -416,7 +416,17 @@ Moralis.Cloud.define('getHistory',async(request)=>{
                         $match:{
                             $and:[
                           		{'senderAddress':{$in:[request.params.addr]}},
-                              	{'Network':{$in:[request.params.chain.toString()]}}
+                              	{'Network':{$in:[request.params.chain.toString()]}},
+                              	{
+                                  'tstamp':{
+                                  		$gte:new Date(request.params.start)
+                                  }
+                                },
+                              	{
+                                  'tstamp':{
+                                  		$lte:new Date(request.params.end)
+                                  }
+                                }
                           	]
                         }
                       }
@@ -446,11 +456,10 @@ Moralis.Cloud.define('getHistory',async(request)=>{
     			confirm:trans[i].confirmed,
     			gas:gas,
     			tstamp:new Date(trans[i].tstamp.iso).toUTCString(),
-    			tokenAddress:trans[i].Token
+                tokenAddress:trans[i].Token
               }
             );
         }
-  		//return new Date(request.params.start);
   		return history;
 });
 
@@ -467,4 +476,58 @@ Moralis.Cloud.define('WebsocketTran',async(request)=>{
        }
     });
 });
-
+Moralis.Cloud.define('countPlot',async(request)=>{
+  		const User= Moralis.Object.extend("_User");
+  		const trans=new Parse.Query("Transactions");
+  		let accts=[];
+  		const user=await new Parse.Query(User).equalTo('objectId',request.params.id).first({useMasterKey:true});
+  		accts=user.get('accounts');
+        const pipeNwk=[
+            	{
+                  match:{'receiverAddress':{$in:accts}}
+                },
+            	{ 
+                  group: {
+                    objectId:"$Network",
+                    total:{ $sum:1 },
+                    desg:{ "$first":0 }
+                  } 
+                },
+            	{
+                  unionWith:{
+                    coll:"Transactions",
+                    pipeline:[
+                      {
+                        $match:{'senderAddress':{$in:accts}}
+                      },
+            		  { 
+                  		$group: {
+                    		_id:"$Network",
+                    		total:{ $sum:1 },
+                          	desg:{ "$first":1 }
+                  		 } 
+                	  }
+                    ]
+                  }
+                }
+          	];
+  		const pipeCtg=[
+            	{
+                  match:{'senderAddress':{$in:accts}}
+                },
+            	{ 
+                  group: {
+                    objectId:"$Category",
+                    total:{ $sum:1 }
+                  } 
+                }
+        	];
+        const nwkwise=await trans.aggregate(pipeNwk);
+  		const ctgwise=await trans.aggregate(pipeCtg);
+  		const chainSet=Array.from(new Set(nwkwise.map(({objectId:name})=>(name))));
+  		const numcard=chainSet.map((name)=>({
+          name,In:nwkwise.find(o => o.desg===0 && o.objectId===name)?.total,Out:nwkwise.find(o => o.desg===1 && o.objectId===name)?.total
+        }));
+  		const catg=ctgwise.flat().map(({objectId:name,total:value})=>({name,value}));
+  		return {numcard,catg};
+});
