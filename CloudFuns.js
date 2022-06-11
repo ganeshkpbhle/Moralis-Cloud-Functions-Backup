@@ -160,9 +160,25 @@ Moralis.Cloud.define('getInvites',async(request)=>{
 		const logger = Moralis.Cloud.getLogger();
 		const Request = Moralis.Object.extend("Requests");
   		const Pending = Moralis.Object.extend("Pending");
-  		const requests=await new Parse.Query(Request).equalTo('userName',request.params.name).find({useMasterKey:true});
-  		const pendings=await new Parse.Query(Pending).equalTo('userName',request.params.name).find({useMasterKey:true});
-  		return{ reqs:requests,pends:pendings};
+  		const Friends = Moralis.Object.extend("Friends");
+  		let friends= [];
+  		let pends=[];
+  		let reqs=[];
+  		friends=await new Parse.Query(Friends).equalTo('user',request.params.name).find({useMasterKey:true});
+  		friends=friends?.map((e)=>({name:e.get('actualName'),flg:e.get('block')})).filter((e)=>e.flg===true).map((e)=>e.name);
+  		let requests=await new Parse.Query(Request).equalTo('userName',request.params.name).find({useMasterKey:true});
+  		let pendings=await new Parse.Query(Pending).equalTo('userName',request.params.name).find({useMasterKey:true});
+  		for(let i=0;i<requests.length;i++){
+        	if(!friends.includes(requests[i].get('friendName'))){
+            	reqs.push(requests[i]);
+            }
+        }
+  		for(let i=0;i<pendings.length;i++){
+        	if(!friends.includes(pendings[i].get('userName'))){
+            	pends.push(pendings[i]);
+            }
+        }
+  		return{ reqs,pends};
 });
 Moralis.Cloud.define('getUser',async(request)=>{
 		const logger = Moralis.Cloud.getLogger();
@@ -353,6 +369,7 @@ Moralis.Cloud.define('getStatus',async(request)=>{
           	const coll=await new Moralis.Query(ChainColl).equalTo('hash',trans[0].transactionHash).first({useMasterKey:true});
             const subcoll=await new Moralis.Query(ChainSub).equalTo('transaction_hash',trans[0].transactionHash).first({useMasterKey:true});
         	const gas=coll.get('gas');
+          	
           	stats.push(
               {
               	senderName:trans[i].senderName,
@@ -364,7 +381,7 @@ Moralis.Cloud.define('getStatus',async(request)=>{
     			sendAddr:trans[i].senderAddress,
     			recvAddr:trans[i].receiverAddress,
     			transactionhash:trans[i].transactionHash,
-    			confirm:trans[i].confirmed,
+    			confirm:(coll.length>0)?coll.get('confirmed'):trans[i].confirmed,
     			gas:gas,
     			tstamp:new Date(trans[i].tstamp.iso).toUTCString(),
     			tokenAddress:trans[i].Token
@@ -404,39 +421,52 @@ Moralis.Cloud.define('getHistory',async(request)=>{
             	ChainSub=Moralis.Object.extend("BscTokenTransfers");
            		 break;
         }
+  		let start=new Date(request.params.start.substring(0,10)).toISOString();
+  		let end=new Date(request.params.end.substring(0,10)).toISOString();
   		const trans=await new Parse.Query("Transactions").equalTo('Network',request.params.chain.toString()).aggregate([
             	{
-                  match:{'receiverAddress':request.params.addr}
+                  match:{
+                    	$expr: {
+          							$and: [
+            							{ $eq: ["$receiverAddress", request.params.addr] },
+                                      	{
+              							  $gte: ["$_created_at",{"$toDate":start}]
+            							},
+            							{
+              							  $lte: ["$_created_at",{"$toDate":end}]
+            							}
+          							]
+        						}
+                  	}
+                  
                 },
               	{
                   unionWith:{
                     coll:"Transactions",
                     pipeline:[
-                      {
-                        $match:{
-                            $and:[
-                          		{'senderAddress':{$in:[request.params.addr]}},
-                              	{'Network':{$in:[request.params.chain.toString()]}},
-                              	{
-                                  'tstamp':{
-                                  		$gte:new Date(request.params.start)
-                                  }
-                                },
-                              	{
-                                  'tstamp':{
-                                  		$lte:new Date(request.params.end)
-                                  }
-                                }
-                          	]
-                        }
-                      }
+                         {
+      						$match: {
+        						$expr: {
+          							$and: [
+            							{ $eq: ["$senderAddress", request.params.addr] },
+                                      	{ $eq: ["$Network", request.params.chain.toString()] },
+                                      	{
+              							  $gte: ["$_created_at",{"$toDate":start}]
+            							},
+            							{
+              							  $lte: ["$_created_at",{"$toDate":end}]
+            							}
+          							]
+        						}
+      						}
+    					}
                     ]
                   }
                 },
               	{
                   sort:{'tstamp':-1}
                 }
-            ]);
+            ],{useMasterKey:true});
   		let history=[];
   		for(let i=0;i<trans.length;i++){
           	const coll=await new Moralis.Query(ChainColl).equalTo('hash',trans[0].transactionHash).first({useMasterKey:true});
@@ -525,9 +555,22 @@ Moralis.Cloud.define('countPlot',async(request)=>{
         const nwkwise=await trans.aggregate(pipeNwk);
   		const ctgwise=await trans.aggregate(pipeCtg);
   		const chainSet=Array.from(new Set(nwkwise.map(({objectId:name})=>(name))));
-  		const numcard=chainSet.map((name)=>({
-          name,In:nwkwise.find(o => o.desg===0 && o.objectId===name)?.total,Out:nwkwise.find(o => o.desg===1 && o.objectId===name)?.total
-        }));
+  		const numcard=chainSet.map((name)=>{
+          const nwkIn=nwkwise.find(o => o.desg===0 && o.objectId===name)?.total;
+          const nwkOut=nwkwise.find(o => o.desg===1 && o.objectId===name)?.total
+          return {
+          			name,
+          			In:(nwkIn)?nwkIn:0,
+          			Out:(nwkOut)?nwkOut:0
+          };
+        });
   		const catg=ctgwise.flat().map(({objectId:name,total:value})=>({name,value}));
   		return {numcard,catg};
+});
+Moralis.Cloud.define("blockFriend", async (request) => {
+  const Friends = Moralis.Object.extend("Friends");
+  let friend= await new Moralis.Query(Friends).equalTo('objectId',request.params.id).first({useMasterKey:true});
+  friend.set('block',request.params.flg);
+  await friend.save(null,{useMasterKey:true});
+  return friend;
 });
